@@ -127,7 +127,7 @@ export class RepetitionDetectionProcessor {
       segmentDir
     );
 
-    await this.concatenateSegments(segmentPaths, outputPath);
+    await this.concatenateSegments(segmentPaths, outputPath, metadata);
 
     // Step 6: Cleanup (95% progress)
     await progressCallback(95);
@@ -332,23 +332,18 @@ export class RepetitionDetectionProcessor {
 
   private async concatenateSegments(
     segmentPaths: string[],
-    outputPath: string
+    outputPath: string,
+    sourceMetadata?: any
   ): Promise<void> {
     if (segmentPaths.length === 0) {
       throw new Error('No segments to concatenate');
     }
 
-    // Create concat file list
-    const concatFilePath = path.join(
-      path.dirname(segmentPaths[0]),
-      'concat_list.txt'
+    // Use re-encode concatenation to ensure smooth playback and quality preservation
+    await this.ffmpeg.concatenateVideosWithReencode(
+      segmentPaths,
+      outputPath,
+      sourceMetadata
     );
-
-    const concatContent = segmentPaths.map((p) => `file '${p}'`).join('\n');
-
-    await fs.writeFile(concatFilePath, concatContent);
-
-    // Execute concatenation
-    await this.ffmpeg.concatenateVideos(concatFilePath, outputPath);
   }
 }
