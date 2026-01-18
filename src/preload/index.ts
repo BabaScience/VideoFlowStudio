@@ -26,6 +26,11 @@ const ALLOWED_CHANNELS = {
     'output:list',
     'output:get',
     'output:delete',
+    'ai:transcribe',
+    'ai:analyze',
+    'ai:getAnalysis',
+    'ai:setApiKey',
+    'ai:isConfigured',
   ],
   on: [
     'job:progress',
@@ -69,6 +74,13 @@ export interface ElectronAPI {
     get: (jobId: string) => Promise<any | null>;
     delete: (jobId: string) => Promise<void>;
   };
+  ai: {
+    transcribe: (videoPath: string, options?: any) => Promise<any>;
+    analyze: (videoPath: string, options?: any, jobId?: string, videoId?: string) => Promise<any>;
+    getAnalysis: (jobId: string) => Promise<any | null>;
+    setApiKey: (apiKey: string) => Promise<void>;
+    isConfigured: () => Promise<boolean>;
+  };
   on: (channel: string, callback: (...args: any[]) => void) => void;
   removeListener: (channel: string, callback: (...args: any[]) => void) => void;
 }
@@ -108,6 +120,13 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('output:list'),
     get: (jobId: string) => ipcRenderer.invoke('output:get', jobId),
     delete: (jobId: string) => ipcRenderer.invoke('output:delete', jobId),
+  },
+  ai: {
+    transcribe: (videoPath: string, options?: any) => ipcRenderer.invoke('ai:transcribe', videoPath, options),
+    analyze: (videoPath: string, options?: any, jobId?: string, videoId?: string) => ipcRenderer.invoke('ai:analyze', videoPath, options, jobId, videoId),
+    getAnalysis: (jobId: string) => ipcRenderer.invoke('ai:getAnalysis', jobId),
+    setApiKey: (apiKey: string) => ipcRenderer.invoke('ai:setApiKey', apiKey),
+    isConfigured: () => ipcRenderer.invoke('ai:isConfigured'),
   },
 
   on: (channel: string, callback: (...args: any[]) => void) => {

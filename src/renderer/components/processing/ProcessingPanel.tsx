@@ -19,6 +19,8 @@ export const ProcessingPanel: React.FC = () => {
     safeMode: false,
     minKeepDuration: 0.3,
     useSinglePass: false,
+    useAI: false,
+    useWhisper: false,
   });
 
   const [repetitionConfig, setRepetitionConfig] = useState({
@@ -28,7 +30,26 @@ export const ProcessingPanel: React.FC = () => {
     safeMode: false,
     minKeepDuration: 0.3,
     useSinglePass: false,
+    useAI: false,
+    analyzeTranscript: false,
   });
+
+  const [aiConfigured, setAiConfigured] = useState(false);
+
+  React.useEffect(() => {
+    checkAIConfiguration();
+  }, []);
+
+  const checkAIConfiguration = async () => {
+    try {
+      if (window.api?.ai?.isConfigured) {
+        const configured = await window.api.ai.isConfigured();
+        setAiConfigured(configured);
+      }
+    } catch (error) {
+      console.error('Failed to check AI configuration:', error);
+    }
+  };
 
   const handleSilenceRemoval = async () => {
     if (!selectedVideo) return;
@@ -225,6 +246,58 @@ export const ProcessingPanel: React.FC = () => {
                     </div>
                   </div>
                 </label>
+
+                <div className="pt-2 border-t border-dark-divider">
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={silenceConfig.useAI}
+                      onChange={(e) =>
+                        setSilenceConfig({
+                          ...silenceConfig,
+                          useAI: e.target.checked,
+                        })
+                      }
+                      disabled={!aiConfigured}
+                      className="w-4 h-4 rounded border-dark-border accent-dark-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-dark-text-secondary flex items-center gap-2">
+                        Enable AI Analysis
+                        {!aiConfigured && (
+                          <span className="text-xs text-dark-warning">(Requires API key)</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-dark-text-tertiary">
+                        Use Whisper + GPT for intelligent silence detection
+                      </div>
+                    </div>
+                  </label>
+
+                  {silenceConfig.useAI && (
+                    <label className="flex items-center gap-3 cursor-pointer group mt-3 ml-7">
+                      <input
+                        type="checkbox"
+                        checked={silenceConfig.useWhisper}
+                        onChange={(e) =>
+                          setSilenceConfig({
+                            ...silenceConfig,
+                            useWhisper: e.target.checked,
+                          })
+                        }
+                        className="w-4 h-4 rounded border-dark-border accent-dark-primary cursor-pointer"
+                      />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-dark-text-secondary">
+                          Use Whisper for Silence Detection
+                        </div>
+                        <div className="text-xs text-dark-text-tertiary">
+                          Distinguish speech pauses from ambient silence
+                        </div>
+                      </div>
+                    </label>
+                  )}
+                </div>
               </div>
 
               <Button
@@ -363,6 +436,58 @@ export const ProcessingPanel: React.FC = () => {
                     </div>
                   </div>
                 </label>
+
+                <div className="pt-2 border-t border-dark-divider">
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={repetitionConfig.useAI}
+                      onChange={(e) =>
+                        setRepetitionConfig({
+                          ...repetitionConfig,
+                          useAI: e.target.checked,
+                        })
+                      }
+                      disabled={!aiConfigured}
+                      className="w-4 h-4 rounded border-dark-border accent-dark-secondary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-dark-text-secondary flex items-center gap-2">
+                        Enable AI Analysis
+                        {!aiConfigured && (
+                          <span className="text-xs text-dark-warning">(Requires API key)</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-dark-text-tertiary">
+                        Use GPT for verbal repetition detection
+                      </div>
+                    </div>
+                  </label>
+
+                  {repetitionConfig.useAI && (
+                    <label className="flex items-center gap-3 cursor-pointer group mt-3 ml-7">
+                      <input
+                        type="checkbox"
+                        checked={repetitionConfig.analyzeTranscript}
+                        onChange={(e) =>
+                          setRepetitionConfig({
+                            ...repetitionConfig,
+                            analyzeTranscript: e.target.checked,
+                          })
+                        }
+                        className="w-4 h-4 rounded border-dark-border accent-dark-secondary cursor-pointer"
+                      />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-dark-text-secondary">
+                          Detect Verbal Repetitions
+                        </div>
+                        <div className="text-xs text-dark-text-tertiary">
+                          Analyze transcript to find repeated phrases
+                        </div>
+                      </div>
+                    </label>
+                  )}
+                </div>
               </div>
 
               <Button

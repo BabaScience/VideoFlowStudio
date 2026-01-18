@@ -15,6 +15,8 @@ export interface RepetitionDetectionConfig {
   safeMode?: boolean; // Re-encode segments (default: false for speed)
   minKeepDuration?: number; // Minimum keep segment duration in seconds (default: 0.3)
   useSinglePass?: boolean; // Use filter_complex single-pass (default: false)
+  useAI?: boolean; // Enable GPT analysis for verbal repetitions (default: false)
+  analyzeTranscript?: boolean; // Use transcript for repetition detection (default: false)
 }
 
 export interface RepetitiveSegment {
@@ -59,12 +61,53 @@ export class RepetitionDetectionProcessor {
     config: RepetitionDetectionConfig,
     outputPath: string,
     progressCallback: (progress: number) => Promise<void>,
-    _jobId?: string // Reserved for future process tracking
+    jobId?: string
   ): Promise<ProcessingResult> {
     console.log(`Starting repetition detection for: ${videoPath}`);
-    // Note: _jobId is reserved for future process tracking implementation
-    // Currently, FFmpeg processes are spawned via FFmpegWrapper.executeFFmpeg
-    // which doesn't expose process handles for tracking
+
+    let aiVerbalRepetitions: any[] = [];
+    let videoId: string | undefined;
+
+    // Step 0: AI Analysis (if enabled) - 5% progress
+    if (config.useAI && config.analyzeTranscript) {
+      try {
+        const { AIService } = await import('../services/ai-service.js');
+        const aiService = new AIService();
+        
+        if (aiService.isAvailable() && jobId) {
+          console.log('Using AI-enhanced repetition detection with GPT');
+          await progressCallback(5);
+          
+          // Get video ID from job
+          // Note: JobService requires QueueManager, but we only need getJobStatus which doesn't use it
+          // We'll access the database directly instead
+          const { DatabaseConnection } = await import('../database/connection.js');
+          const db = DatabaseConnection.getDatabase();
+          const jobStmt = db.prepare('SELECT video_id FROM jobs WHERE id = ?');
+          const job = jobStmt.get(jobId) as { video_id: string } | undefined;
+          videoId = job?.video_id;
+
+          // Run AI analysis for verbal repetitions
+          const aiAnalysis = await aiService.analyzeVideo(
+            videoPath,
+            {
+              useWhisper: true,
+              useGPT: true,
+              detectRepetitions: true,
+            },
+            jobId,
+            videoId
+          );
+
+          if (aiAnalysis.contentAnalysis?.repetitions) {
+            aiVerbalRepetitions = aiAnalysis.contentAnalysis.repetitions;
+            console.log(`AI detected ${aiVerbalRepetitions.length} verbal repetitions`);
+          }
+        }
+      } catch (error) {
+        console.warn('AI-enhanced detection failed, continuing with visual detection:', error);
+      }
+    }
 
     // Step 1: Extract frames (20% progress)
     await progressCallback(20);
@@ -121,7 +164,7 @@ export class RepetitionDetectionProcessor {
 
     // Step 3: Detect repetitions (60% progress)
     await progressCallback(60);
-    const repetitiveSegments = await this.detectRepetitions(
+    const visualRepetitiveSegments = await this.detectRepetitions(
       hashes,
       frameInterval,
       config,
@@ -130,6 +173,23 @@ export class RepetitionDetectionProcessor {
         await progressCallback(60 + (progress / 100) * 10);
       }
     );
+
+    // Merge AI verbal repetitions with visual repetitions
+    let repetitiveSegments = visualRepetitiveSegments;
+    
+    if (aiVerbalRepetitions.length > 0) {
+      // Convert AI verbal repetitions to RepetitiveSegment format
+      const aiSegments: RepetitiveSegment[] = aiVerbalRepetitions.map((rep: any) => ({
+        firstOccurrence: rep.firstOccurrence,
+        repetitions: rep.repetitions || [],
+        similarityScore: rep.similarityScore || 0.8,
+        confidence: (rep.similarityScore || 0.8) > 0.9 ? 'high' : (rep.similarityScore || 0.8) > 0.75 ? 'medium' : 'low',
+      }));
+
+      // Merge with visual repetitions (combine both types)
+      repetitiveSegments = [...visualRepetitiveSegments, ...aiSegments];
+      console.log(`Combined ${visualRepetitiveSegments.length} visual + ${aiSegments.length} verbal repetitions`);
+    }
 
     if (repetitiveSegments.length === 0) {
       console.log('No repetitions detected, returning original video');

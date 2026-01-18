@@ -276,6 +276,36 @@ class VideoFlowStudioApp {
       return await outputService.deleteProcessedVideo(jobId);
     });
 
+    // AI Services
+    const { AIService } = require('./services/ai-service');
+    const aiService = new AIService();
+
+    // Transcribe video audio
+    ipcMain.handle('ai:transcribe', async (_, videoPath: string, options?: any) => {
+      const { WhisperService } = require('./ai/whisper-service');
+      const whisperService = new WhisperService();
+      return await whisperService.transcribe(videoPath, options);
+    });
+
+    // Analyze video content
+    ipcMain.handle('ai:analyze', async (_, videoPath: string, options?: any, jobId?: string, videoId?: string) => {
+      return await aiService.analyzeVideo(videoPath, options, jobId, videoId);
+    });
+
+    // Get AI analysis result
+    ipcMain.handle('ai:getAnalysis', async (_, jobId: string) => {
+      return await aiService.getAnalysisResult(jobId);
+    });
+
+    // AI Settings
+    ipcMain.handle('ai:setApiKey', async (_, apiKey: string) => {
+      return await aiService.setApiKey(apiKey);
+    });
+
+    ipcMain.handle('ai:isConfigured', async () => {
+      return aiService.isAvailable();
+    });
+
     // Select Output Directory
     ipcMain.handle('preferences:selectOutputDirectory', async () => {
       const result = await dialog.showOpenDialog({

@@ -2,8 +2,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '../common/Button';
+import { AISettingsPanel } from './AISettingsPanel';
 
 export const SettingsPanel: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'general' | 'ai'>('general');
   const [preferences, setPreferences] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
 
@@ -45,10 +47,41 @@ export const SettingsPanel: React.FC = () => {
   }
 
   return (
-    <div className="h-full overflow-auto p-8">
-      <h2 className="text-2xl font-semibold text-dark-text-primary mb-6">Settings</h2>
-      
-      <div className="space-y-6">
+    <div className="h-full flex flex-col">
+      {/* Header with Tabs */}
+      <div className="px-8 pt-8 pb-4 border-b border-dark-divider">
+        <h2 className="text-2xl font-semibold text-dark-text-primary mb-4">Settings</h2>
+        <div className="flex gap-1">
+          <button
+            onClick={() => setActiveTab('general')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'general'
+                ? 'bg-dark-primary text-white'
+                : 'text-dark-text-secondary hover:text-dark-text-primary hover:bg-dark-bg-tertiary'
+            }`}
+          >
+            General
+          </button>
+          <button
+            onClick={() => setActiveTab('ai')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'ai'
+                ? 'bg-dark-primary text-white'
+                : 'text-dark-text-secondary hover:text-dark-text-primary hover:bg-dark-bg-tertiary'
+            }`}
+          >
+            AI Features
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-auto">
+        {activeTab === 'ai' ? (
+          <AISettingsPanel />
+        ) : (
+          <div className="p-8">
+            <div className="space-y-6">
         <SettingsSection title="Output" description="Configure output preferences">
           <div className="space-y-4">
             <div>
@@ -109,6 +142,9 @@ export const SettingsPanel: React.FC = () => {
             </div>
           </div>
         </SettingsSection>
+      </div>
+    </div>
+        )}
       </div>
     </div>
   );

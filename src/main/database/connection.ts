@@ -109,6 +109,32 @@ export class DatabaseConnection {
       );
     `);
 
+    // Create AI analysis table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS ai_analysis (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        video_id TEXT NOT NULL,
+        transcription TEXT,
+        word_timestamps TEXT,
+        filler_words TEXT,
+        verbal_repetitions TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+        FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create AI settings table (for encrypted API keys)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS ai_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        encrypted BOOLEAN DEFAULT 1,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // Create indexes
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(created_at DESC);
@@ -116,6 +142,8 @@ export class DatabaseConnection {
       CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
       CREATE INDEX IF NOT EXISTS idx_segments_video_id ON segments(video_id);
       CREATE INDEX IF NOT EXISTS idx_segments_job_id ON segments(job_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_analysis_job_id ON ai_analysis(job_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_analysis_video_id ON ai_analysis(video_id);
     `);
   }
 

@@ -2,7 +2,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
-import { FFmpegWrapper } from './wrapper';
+import { FFmpegWrapper, VideoMetadata } from './wrapper';
 import { ProcessingResult } from '../queue/queue-manager';
 
 export interface SilenceDetectionConfig {
@@ -14,6 +14,8 @@ export interface SilenceDetectionConfig {
   safeMode?: boolean; // Re-encode segments (default: false for speed)
   minKeepDuration?: number; // Minimum keep segment duration in seconds (default: 0.3)
   useSinglePass?: boolean; // Use filter_complex single-pass (default: false)
+  useAI?: boolean; // Enable Whisper + GPT analysis (default: false)
+  useWhisper?: boolean; // Use Whisper for intelligent silence detection (default: false)
 }
 
 export interface SilenceSegment {
@@ -64,7 +66,66 @@ export class SilenceRemovalProcessor {
 
     // Step 1: Detect silence segments (10% progress)
     await progressCallback(10);
-    const silenceSegments = await this.detectSilence(videoPath, config, jobId);
+    
+    let silenceSegments: SilenceSegment[] = [];
+    let aiAnalysis: any = null;
+
+    // Use AI-enhanced detection if enabled
+    if (config.useAI && config.useWhisper) {
+      try {
+        const { AIService } = await import('../services/ai-service.js');
+        const aiService = new AIService();
+        
+        if (aiService.isAvailable()) {
+          console.log('Using AI-enhanced silence detection with Whisper');
+          await progressCallback(15);
+          
+          // Get video ID from job if available
+          let videoId: string | undefined;
+          if (jobId) {
+            // Access database directly to avoid JobService constructor dependency
+            const { DatabaseConnection } = await import('../database/connection.js');
+            const db = DatabaseConnection.getDatabase();
+            const jobStmt = db.prepare('SELECT video_id FROM jobs WHERE id = ?');
+            const job = jobStmt.get(jobId) as { video_id: string } | undefined;
+            videoId = job?.video_id;
+          }
+
+          // Run AI analysis
+          aiAnalysis = await aiService.analyzeVideo(
+            videoPath,
+            {
+              useWhisper: true,
+              useGPT: false, // Only need transcription for silence detection
+            },
+            jobId,
+            videoId
+          );
+
+          // Use Whisper voice activity detection for silence
+          if (aiAnalysis.voiceActivity) {
+            const voiceActivitySegments = aiAnalysis.voiceActivity.filter(
+              (va: any) => !va.hasSpeech
+            );
+            silenceSegments = voiceActivitySegments.map((va: any) => ({
+              startTime: va.start,
+              endTime: va.end,
+              duration: va.end - va.start,
+              decibels: config.thresholdDb, // Use configured threshold as fallback
+            }));
+            console.log(`AI detected ${silenceSegments.length} silence segments from Whisper`);
+          }
+        }
+      } catch (error) {
+        console.warn('AI-enhanced detection failed, falling back to FFmpeg:', error);
+        // Fall through to FFmpeg detection
+      }
+    }
+
+    // Fallback to FFmpeg detection if AI not used or failed
+    if (silenceSegments.length === 0) {
+      silenceSegments = await this.detectSilence(videoPath, config, jobId);
+    }
 
     if (silenceSegments.length === 0) {
       console.log('No silence detected, returning original video');

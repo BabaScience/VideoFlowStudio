@@ -170,7 +170,7 @@ export class FFmpegWrapper {
     startTime: number,
     endTime: number,
     outputPath: string,
-    options?: { alignToKeyframe?: boolean }
+    _options?: { alignToKeyframe?: boolean }
   ): Promise<void> {
     const duration = endTime - startTime;
 
@@ -391,16 +391,27 @@ export class FFmpegWrapper {
 
   async extractAudioStream(
     videoPath: string,
-    outputPath: string
+    outputPath: string,
+    format: 'wav' | 'mp3' | 'm4a' = 'wav'
   ): Promise<void> {
     const args = [
       '-i',
       videoPath,
-      '-vn',
-      '-acodec',
-      'copy',
-      outputPath,
+      '-vn', // No video
     ];
+
+    // Convert to specified format
+    if (format === 'wav') {
+      args.push('-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1'); // 16kHz mono WAV for Whisper
+    } else if (format === 'mp3') {
+      args.push('-acodec', 'libmp3lame', '-b:a', '192k');
+    } else if (format === 'm4a') {
+      args.push('-acodec', 'aac', '-b:a', '192k');
+    } else {
+      args.push('-acodec', 'copy'); // Copy original codec
+    }
+
+    args.push(outputPath);
 
     await this.executeFFmpeg(args);
   }
