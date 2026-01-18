@@ -1,0 +1,330 @@
+// src/main/ffmpeg/wrapper.ts
+import { spawn } from 'child_process';
+import path from 'path';
+import { app } from 'electron';
+import fs from 'fs/promises';
+
+export interface VideoMetadata {
+  duration: number;
+  format: {
+    formatName: string;
+    formatLongName: string;
+    size: number;
+    bitRate: number;
+  };
+  video?: {
+    codec: string;
+    width: number;
+    height: number;
+    fps: number;
+    bitRate: number;
+  };
+  audio?: {
+    codec: string;
+    sampleRate: number;
+    channels: number;
+    bitRate: number;
+  };
+}
+
+export class FFmpegWrapper {
+  private ffmpegPath: string;
+  private ffprobePath: string;
+
+  constructor() {
+    let binariesDir: string;
+    
+    if (app.isPackaged) {
+      // In production, binaries are in extraResources
+      binariesDir = path.join(process.resourcesPath, 'binaries');
+    } else {
+      // In development, binaries should be in project root/binaries
+      binariesDir = path.join(app.getAppPath(), 'binaries');
+    }
+
+    this.ffmpegPath = path.join(binariesDir, 'ffmpeg');
+    this.ffprobePath = path.join(binariesDir, 'ffprobe');
+  }
+
+  getBinaryPath(): string {
+    return this.ffmpegPath;
+  }
+
+  async getVideoMetadata(videoPath: string): Promise<VideoMetadata> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        '-v',
+        'quiet',
+        '-print_format',
+        'json',
+        '-show_format',
+        '-show_streams',
+        videoPath,
+      ];
+
+      const ffprobe = spawn(this.ffprobePath, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      ffprobe.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      ffprobe.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      ffprobe.on('close', (code) => {
+        if (code === 0) {
+          try {
+            const metadata = this.parseFFprobeOutput(stdout);
+            resolve(metadata);
+          } catch (error) {
+            reject(new Error(`Failed to parse metadata: ${(error as Error).message}`));
+          }
+        } else {
+          reject(new Error(`FFprobe failed: ${stderr}`));
+        }
+      });
+
+      ffprobe.on('error', (err) => {
+        reject(new Error(`FFprobe process error: ${err.message}`));
+      });
+    });
+  }
+
+  private parseFFprobeOutput(jsonOutput: string): VideoMetadata {
+    const data = JSON.parse(jsonOutput);
+
+    const videoStream = data.streams.find((s: any) => s.codec_type === 'video');
+    const audioStream = data.streams.find((s: any) => s.codec_type === 'audio');
+
+    const metadata: VideoMetadata = {
+      duration: parseFloat(data.format.duration),
+      format: {
+        formatName: data.format.format_name,
+        formatLongName: data.format.format_long_name,
+        size: parseInt(data.format.size),
+        bitRate: parseInt(data.format.bit_rate),
+      },
+    };
+
+    if (videoStream) {
+      metadata.video = {
+        codec: videoStream.codec_name,
+        width: videoStream.width,
+        height: videoStream.height,
+        fps: this.parseFps(videoStream.r_frame_rate),
+        bitRate: parseInt(videoStream.bit_rate || '0'),
+      };
+    }
+
+    if (audioStream) {
+      metadata.audio = {
+        codec: audioStream.codec_name,
+        sampleRate: parseInt(audioStream.sample_rate),
+        channels: audioStream.channels,
+        bitRate: parseInt(audioStream.bit_rate || '0'),
+      };
+    }
+
+    return metadata;
+  }
+
+  private parseFps(fpsString: string): number {
+    const parts = fpsString.split('/');
+    if (parts.length === 2) {
+      return parseFloat(parts[0]) / parseFloat(parts[1]);
+    }
+    return parseFloat(fpsString);
+  }
+
+  async extractSegment(
+    inputPath: string,
+    startTime: number,
+    endTime: number,
+    outputPath: string
+  ): Promise<void> {
+    const duration = endTime - startTime;
+
+    const args = [
+      '-i',
+      inputPath,
+      '-ss',
+      startTime.toString(),
+      '-t',
+      duration.toString(),
+      '-c',
+      'copy',
+      '-avoid_negative_ts',
+      '1',
+      outputPath,
+    ];
+
+    await this.executeFFmpeg(args);
+  }
+
+  async concatenateVideos(
+    concatFilePath: string,
+    outputPath: string
+  ): Promise<void> {
+    const args = [
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      concatFilePath,
+      '-c',
+      'copy',
+      outputPath,
+    ];
+
+    await this.executeFFmpeg(args);
+  }
+
+  async generateThumbnail(
+    videoPath: string,
+    outputPath: string,
+    timestamp: number = 1
+  ): Promise<void> {
+    const args = [
+      '-i',
+      videoPath,
+      '-ss',
+      timestamp.toString(),
+      '-vframes',
+      '1',
+      '-vf',
+      'scale=320:-1',
+      outputPath,
+    ];
+
+    await this.executeFFmpeg(args);
+  }
+
+  async extractAudioStream(
+    videoPath: string,
+    outputPath: string
+  ): Promise<void> {
+    const args = [
+      '-i',
+      videoPath,
+      '-vn',
+      '-acodec',
+      'copy',
+      outputPath,
+    ];
+
+    await this.executeFFmpeg(args);
+  }
+
+  async extractFrames(
+    videoPath: string,
+    outputDir: string,
+    fps: number = 1
+  ): Promise<string[]> {
+    await fs.mkdir(outputDir, { recursive: true });
+
+    const args = [
+      '-i',
+      videoPath,
+      '-vf',
+      `fps=${fps}`,
+      path.join(outputDir, 'frame_%04d.png'),
+    ];
+
+    await this.executeFFmpeg(args);
+
+    // Get list of generated frames
+    const files = await fs.readdir(outputDir);
+    return files
+      .filter((f) => f.startsWith('frame_') && f.endsWith('.png'))
+      .map((f) => path.join(outputDir, f))
+      .sort();
+  }
+
+  async detectScenes(
+    videoPath: string,
+    threshold: number = 0.3
+  ): Promise<number[]> {
+    return new Promise((resolve, reject) => {
+      const sceneTimestamps: number[] = [];
+
+      const args = [
+        '-i',
+        videoPath,
+        '-filter:v',
+        `select='gt(scene,${threshold})',showinfo`,
+        '-f',
+        'null',
+        '-',
+      ];
+
+      const ffmpeg = spawn(this.ffmpegPath, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stderr = '';
+
+      ffmpeg.stderr.on('data', (data) => {
+        stderr += data.toString();
+
+        // Parse scene detection output
+        const lines = data.toString().split('\n');
+        lines.forEach((line: string) => {
+          const match = line.match(/pts_time:([\d.]+)/);
+          if (match) {
+            sceneTimestamps.push(parseFloat(match[1]));
+          }
+        });
+      });
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0 || sceneTimestamps.length > 0) {
+          resolve(sceneTimestamps);
+        } else {
+          reject(new Error(`Scene detection failed: ${stderr}`));
+        }
+      });
+
+      ffmpeg.on('error', (err) => {
+        reject(new Error(`FFmpeg process error: ${err.message}`));
+      });
+    });
+  }
+
+  private executeFFmpeg(args: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const ffmpeg = spawn(this.ffmpegPath, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stderr = '';
+
+      ffmpeg.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`FFmpeg failed with code ${code}: ${stderr}`));
+        }
+      });
+
+      ffmpeg.on('error', (err) => {
+        reject(new Error(`FFmpeg process error: ${err.message}`));
+      });
+    });
+  }
+
+  sanitizePath(filePath: string): string {
+    // Remove potentially dangerous characters
+    return filePath.replace(/[;&|`$()]/g, '');
+  }
+}
