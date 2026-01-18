@@ -70,9 +70,22 @@ export class RepetitionDetectionProcessor {
     await progressCallback(20);
     const metadata = await this.ffmpeg.getVideoMetadata(videoPath);
     const fps = metadata.video?.fps || 30;
-    const frameInterval = config.samplingInterval / fps;
+    let frameInterval = config.samplingInterval / fps;
+    
+    // Limit number of frames to prevent excessive processing
+    const expectedFrames = Math.ceil(metadata.duration / frameInterval);
+    const maxFrames = 1000; // Limit to prevent excessive processing
+    
+    if (expectedFrames > maxFrames) {
+      console.warn(`Video would generate ${expectedFrames} frames, limiting to ${maxFrames}`);
+      // Adjust sampling interval to limit frames
+      frameInterval = metadata.duration / maxFrames;
+      console.log(`Adjusted frame interval to ${frameInterval.toFixed(3)}s (was ${(config.samplingInterval / fps).toFixed(3)}s)`);
+    }
     
     const tempDir = await fs.mkdtemp(path.join('/tmp', 'videoflow-repetition-'));
+    
+    console.log(`Extracting frames: fps=${fps}, interval=${frameInterval.toFixed(3)}s, expected frames=${Math.ceil(metadata.duration / frameInterval)}`);
     
     // Note: extractFrames spawns FFmpeg internally, but we can't easily track it
     // For now, we'll track processes at a higher level if needed
@@ -82,19 +95,40 @@ export class RepetitionDetectionProcessor {
       tempDir,
       1 / frameInterval
     );
+    
+    console.log(`Extracted ${framePaths.length} frames`);
 
     // Step 2: Compute perceptual hashes (40% progress)
     await progressCallback(40);
-    const hashes = await Promise.all(
-      framePaths.map((framePath) => this.computePerceptualHash(framePath))
-    );
+    console.log(`Computing hashes for ${framePaths.length} frames...`);
+    
+    // Process hashes in batches to avoid blocking and provide progress
+    const batchSize = 50;
+    const hashes: string[] = [];
+    for (let i = 0; i < framePaths.length; i += batchSize) {
+      const batch = framePaths.slice(i, i + batchSize);
+      const batchHashes = await Promise.all(
+        batch.map((framePath) => this.computePerceptualHash(framePath))
+      );
+      hashes.push(...batchHashes);
+      
+      // Update progress: 40% to 60% for hash computation
+      const hashProgress = 40 + ((i + batch.length) / framePaths.length) * 20;
+      await progressCallback(hashProgress);
+    }
+    
+    console.log(`Computed ${hashes.length} hashes`);
 
     // Step 3: Detect repetitions (60% progress)
     await progressCallback(60);
-    const repetitiveSegments = this.detectRepetitions(
+    const repetitiveSegments = await this.detectRepetitions(
       hashes,
       frameInterval,
-      config
+      config,
+      async (progress: number) => {
+        // Map internal progress (0-100) to overall progress (60-70%)
+        await progressCallback(60 + (progress / 100) * 10);
+      }
     );
 
     if (repetitiveSegments.length === 0) {
@@ -205,19 +239,32 @@ export class RepetitionDetectionProcessor {
   }
 
   private async computePerceptualHash(imagePath: string): Promise<string> {
-    const buffer = await sharp(imagePath)
-      .resize(32, 32, { fit: 'fill' })
-      .greyscale()
-      .raw()
-      .toBuffer();
+    try {
+      // Add timeout to prevent hanging on corrupted images
+      const buffer = await Promise.race([
+        sharp(imagePath)
+          .resize(32, 32, { fit: 'fill' })
+          .greyscale()
+          .raw()
+          .toBuffer(),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Hash computation timeout')), 10000)
+        )
+      ]);
 
-    const average =
-      buffer.reduce((a, b) => a + b, 0) / buffer.length;
-    const hash = Array.from(buffer)
-      .map((pixel: number) => (pixel > average ? '1' : '0'))
-      .join('');
+      const average =
+        buffer.reduce((a, b) => a + b, 0) / buffer.length;
+      const hash = Array.from(buffer)
+        .map((pixel: number) => (pixel > average ? '1' : '0'))
+        .join('');
 
-    return hash;
+      return hash;
+    } catch (error) {
+      console.error(`Failed to compute hash for ${imagePath}:`, error);
+      // Return a default hash to prevent blocking the entire process
+      // Use a pattern that won't match anything (all zeros)
+      return '0'.repeat(1024); // Default hash (32*32 = 1024 pixels)
+    }
   }
 
   private hammingDistance(hash1: string, hash2: string): number {
@@ -235,21 +282,45 @@ export class RepetitionDetectionProcessor {
     return 1 - distance / hashLength;
   }
 
-  private detectRepetitions(
+  private async detectRepetitions(
     hashes: string[],
     frameInterval: number,
-    config: RepetitionDetectionConfig
-  ): RepetitiveSegment[] {
+    config: RepetitionDetectionConfig,
+    progressCallback?: (progress: number) => Promise<void>
+  ): Promise<RepetitiveSegment[]> {
     const repetitiveSegments: RepetitiveSegment[] = [];
     const minFrames = Math.ceil(
       config.minRepetitionLength / frameInterval
     );
     const windowSize = minFrames;
+    
+    // Limit comparison range: only compare windows within reasonable time distance
+    // (e.g., max 60 seconds apart to avoid comparing unrelated segments)
+    // This dramatically reduces O(n²) complexity
+    const maxFrameDistance = Math.min(
+      Math.ceil(60 / frameInterval), // Max 60 seconds apart
+      hashes.length // Don't exceed array bounds
+    );
+
+    // Calculate total comparisons more accurately
+    let totalComparisons = 0;
+    for (let i = 0; i < hashes.length - windowSize; i++) {
+      const maxJ = Math.min(i + maxFrameDistance, hashes.length - windowSize);
+      totalComparisons += Math.max(0, maxJ - (i + windowSize));
+    }
+    
+    let completedComparisons = 0;
+    let lastProgressUpdate = 0;
+    
+    console.log(`Detecting repetitions: ${hashes.length} hashes, windowSize=${windowSize}, maxFrameDistance=${maxFrameDistance}, total comparisons=${totalComparisons}`);
 
     for (let i = 0; i < hashes.length - windowSize; i++) {
       const window1 = hashes.slice(i, i + windowSize);
-
-      for (let j = i + windowSize; j < hashes.length - windowSize; j++) {
+      
+      // Limit inner loop to reasonable distance
+      const maxJ = Math.min(i + maxFrameDistance, hashes.length - windowSize);
+      
+      for (let j = i + windowSize; j < maxJ; j++) {
         const window2 = hashes.slice(j, j + windowSize);
 
         // Calculate average similarity
@@ -305,8 +376,33 @@ export class RepetitionDetectionProcessor {
             });
           }
         }
+        
+        completedComparisons++;
+        
+        // Report progress every 100 comparisons or every 1% progress, whichever comes first
+        if (progressCallback && totalComparisons > 0) {
+          const currentProgress = Math.min(100, (completedComparisons / totalComparisons) * 100);
+          // Update progress every 1% or every 100 comparisons
+          if (completedComparisons % 100 === 0 || currentProgress - lastProgressUpdate >= 1) {
+            lastProgressUpdate = currentProgress;
+            await progressCallback(currentProgress);
+          }
+        }
+      }
+      
+      // Also update progress after each outer loop iteration for very long videos
+      if (progressCallback && totalComparisons > 0 && i % 10 === 0) {
+        const currentProgress = Math.min(100, (completedComparisons / totalComparisons) * 100);
+        await progressCallback(currentProgress);
       }
     }
+    
+    // Final progress update
+    if (progressCallback) {
+      await progressCallback(100);
+    }
+    
+    console.log(`Repetition detection complete: found ${repetitiveSegments.length} repetitive segments after ${completedComparisons} comparisons`);
 
     return repetitiveSegments;
   }

@@ -480,27 +480,44 @@ export class FFmpegWrapper {
     });
   }
 
-  private executeFFmpeg(args: string[]): Promise<void> {
+  private executeFFmpeg(args: string[], timeoutMs: number = 300000): Promise<void> {
     return new Promise((resolve, reject) => {
       const ffmpeg = spawn(this.ffmpegPath, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       let stderr = '';
+      let timeoutId: NodeJS.Timeout | null = null;
+
+      // Set timeout (default 5 minutes) to prevent hanging
+      timeoutId = setTimeout(() => {
+        if (!ffmpeg.killed) {
+          console.warn(`FFmpeg operation timed out after ${timeoutMs}ms, killing process`);
+          ffmpeg.kill('SIGTERM');
+          setTimeout(() => {
+            if (!ffmpeg.killed) {
+              ffmpeg.kill('SIGKILL');
+            }
+          }, 2000);
+        }
+        reject(new Error(`FFmpeg operation timed out after ${timeoutMs}ms: ${stderr.substring(0, 500)}`));
+      }, timeoutMs);
 
       ffmpeg.stderr.on('data', (data) => {
         stderr += data.toString();
       });
 
       ffmpeg.on('close', (code) => {
+        if (timeoutId) clearTimeout(timeoutId);
         if (code === 0) {
           resolve();
         } else {
-          reject(new Error(`FFmpeg failed with code ${code}: ${stderr}`));
+          reject(new Error(`FFmpeg failed with code ${code}: ${stderr.substring(0, 1000)}`));
         }
       });
 
       ffmpeg.on('error', (err) => {
+        if (timeoutId) clearTimeout(timeoutId);
         reject(new Error(`FFmpeg process error: ${err.message}`));
       });
     });

@@ -1,5 +1,7 @@
 // src/main/services/output-service.ts
 import { DatabaseConnection } from '../database/connection';
+import fs from 'fs/promises';
+import path from 'path';
 
 export interface ProcessedVideo {
   id: string; // job id
@@ -117,5 +119,43 @@ export class OutputService {
       processedDuration: resultData?.processedDuration,
       originalDuration: resultData?.originalDuration,
     };
+  }
+
+  async deleteProcessedVideo(jobId: string): Promise<void> {
+    // Get the output path from the job
+    const video = await this.getProcessedVideoById(jobId);
+    if (!video) {
+      throw new Error(`Processed video with job ID ${jobId} not found`);
+    }
+
+    // Delete the output file
+    try {
+      if (await fs.access(video.outputPath).then(() => true).catch(() => false)) {
+        await fs.unlink(video.outputPath);
+        console.log(`Deleted output video file: ${video.outputPath}`);
+      }
+    } catch (error) {
+      console.warn(`Failed to delete output file ${video.outputPath}:`, error);
+      // Continue even if file deletion fails - might already be deleted
+    }
+
+    // Delete the output directory if it's empty
+    try {
+      const outputDir = path.dirname(video.outputPath);
+      const files = await fs.readdir(outputDir);
+      if (files.length === 0) {
+        await fs.rmdir(outputDir);
+        console.log(`Deleted empty output directory: ${outputDir}`);
+      }
+    } catch (error) {
+      // Ignore errors - directory might not be empty or might not exist
+      console.warn(`Could not delete output directory:`, error);
+    }
+
+    // Optionally delete the job record (or just mark it as deleted)
+    // For now, we'll keep the job record but remove the output_path
+    const stmt = this.db.prepare('UPDATE jobs SET output_path = NULL WHERE id = ?');
+    stmt.run(jobId);
+    console.log(`Removed output path reference for job ${jobId}`);
   }
 }

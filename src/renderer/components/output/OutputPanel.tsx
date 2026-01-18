@@ -41,6 +41,28 @@ export const OutputPanel: React.FC = () => {
     }
   };
 
+  const handleDeleteVideo = async (videoId: string) => {
+    try {
+      if (!window.api?.output?.delete) {
+        console.error('Output delete API not available');
+        return;
+      }
+      
+      await window.api.output.delete(videoId);
+      
+      // Remove from local state
+      setProcessedVideos(prev => prev.filter(v => v.id !== videoId));
+      
+      // If deleted video was selected, clear selection
+      if (selectedVideoId === videoId) {
+        setSelectedVideoId(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete processed video:', error);
+      alert(`Failed to delete video: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   const selectedVideo = processedVideos.find(v => v.id === selectedVideoId);
 
   return (
@@ -115,6 +137,7 @@ export const OutputPanel: React.FC = () => {
                   video={video}
                   selected={selectedVideoId === video.id}
                   onSelect={() => setSelectedVideoId(video.id)}
+                  onDelete={handleDeleteVideo}
                 />
               </motion.div>
             ))}

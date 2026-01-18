@@ -18,12 +18,14 @@ interface ProcessedVideoCardProps {
   video: ProcessedVideo;
   selected: boolean;
   onSelect: () => void;
+  onDelete?: (videoId: string) => void;
 }
 
 export const ProcessedVideoCard: React.FC<ProcessedVideoCardProps> = ({
   video,
   selected,
   onSelect,
+  onDelete,
 }) => {
   const formatDate = (date: Date): string => {
     return new Date(date).toLocaleDateString('en-US', {
@@ -45,6 +47,13 @@ export const ProcessedVideoCard: React.FC<ProcessedVideoCardProps> = ({
     return video.type === 'silence'
       ? 'bg-dark-primary/20 text-dark-primary'
       : 'bg-dark-warning/20 text-dark-warning';
+  };
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent card selection when clicking delete
+    if (onDelete && window.confirm(`Are you sure you want to delete "${video.originalFilename}"?`)) {
+      onDelete(video.id);
+    }
   };
 
   return (
@@ -74,6 +83,19 @@ export const ProcessedVideoCard: React.FC<ProcessedVideoCardProps> = ({
         <div className={`absolute top-2 right-2 px-2 py-1 rounded-md text-xs font-semibold ${getTypeBadgeColor()}`}>
           {video.type === 'silence' ? 'Silence Removed' : 'Repetition Removed'}
         </div>
+
+        {/* Delete Button */}
+        {onDelete && (
+          <button
+            onClick={handleDelete}
+            className="absolute top-2 left-2 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            title="Delete video"
+          >
+            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        )}
 
         {/* Play Overlay */}
         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">

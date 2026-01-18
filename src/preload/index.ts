@@ -25,6 +25,7 @@ const ALLOWED_CHANNELS = {
     'preferences:selectOutputDirectory',
     'output:list',
     'output:get',
+    'output:delete',
   ],
   on: [
     'job:progress',
@@ -66,6 +67,7 @@ export interface ElectronAPI {
   output: {
     list: () => Promise<any[]>;
     get: (jobId: string) => Promise<any | null>;
+    delete: (jobId: string) => Promise<void>;
   };
   on: (channel: string, callback: (...args: any[]) => void) => void;
   removeListener: (channel: string, callback: (...args: any[]) => void) => void;
@@ -105,6 +107,7 @@ contextBridge.exposeInMainWorld('api', {
   output: {
     list: () => ipcRenderer.invoke('output:list'),
     get: (jobId: string) => ipcRenderer.invoke('output:get', jobId),
+    delete: (jobId: string) => ipcRenderer.invoke('output:delete', jobId),
   },
 
   on: (channel: string, callback: (...args: any[]) => void) => {

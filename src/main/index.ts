@@ -272,6 +272,9 @@ class VideoFlowStudioApp {
     ipcMain.handle('output:get', async (_, jobId: string) => {
       return await outputService.getProcessedVideoById(jobId);
     });
+    ipcMain.handle('output:delete', async (_, jobId: string) => {
+      return await outputService.deleteProcessedVideo(jobId);
+    });
 
     // Select Output Directory
     ipcMain.handle('preferences:selectOutputDirectory', async () => {
