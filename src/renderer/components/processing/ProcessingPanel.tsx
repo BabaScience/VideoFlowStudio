@@ -16,12 +16,18 @@ export const ProcessingPanel: React.FC = () => {
     paddingBefore: 0.5,
     paddingAfter: 0.5,
     detectAudioOnly: false,
+    safeMode: false,
+    minKeepDuration: 0.3,
+    useSinglePass: false,
   });
 
   const [repetitionConfig, setRepetitionConfig] = useState({
     similarityThreshold: 0.8,
     minRepetitionLength: 1,
     samplingInterval: 5,
+    safeMode: false,
+    minKeepDuration: 0.3,
+    useSinglePass: false,
   });
 
   const handleSilenceRemoval = async () => {
@@ -143,6 +149,84 @@ export const ProcessingPanel: React.FC = () => {
                 </div>
               </div>
 
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-sm font-medium text-dark-text-secondary">
+                    Minimum Keep Duration
+                  </label>
+                  <span className="text-sm text-dark-text-primary font-medium">
+                    {silenceConfig.minKeepDuration}s
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.1"
+                  value={silenceConfig.minKeepDuration}
+                  onChange={(e) =>
+                    setSilenceConfig({
+                      ...silenceConfig,
+                      minKeepDuration: parseFloat(e.target.value),
+                    })
+                  }
+                  className="w-full h-2 bg-dark-bg-tertiary rounded-lg appearance-none cursor-pointer accent-dark-primary"
+                />
+                <div className="flex justify-between text-xs text-dark-text-tertiary mt-1">
+                  <span>0.1s</span>
+                  <span>1.0s</span>
+                </div>
+                <p className="text-xs text-dark-text-tertiary mt-1">
+                  Filter out keep segments shorter than this duration
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2 border-t border-dark-divider">
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={silenceConfig.safeMode}
+                    onChange={(e) =>
+                      setSilenceConfig({
+                        ...silenceConfig,
+                        safeMode: e.target.checked,
+                      })
+                    }
+                    className="w-4 h-4 rounded border-dark-border accent-dark-primary cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-dark-text-secondary">
+                      Safe Mode
+                    </div>
+                    <div className="text-xs text-dark-text-tertiary">
+                      Re-encode segments to eliminate frozen frames (slower but more reliable)
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={silenceConfig.useSinglePass}
+                    onChange={(e) =>
+                      setSilenceConfig({
+                        ...silenceConfig,
+                        useSinglePass: e.target.checked,
+                      })
+                    }
+                    className="w-4 h-4 rounded border-dark-border accent-dark-primary cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-dark-text-secondary">
+                      Single Pass (Advanced)
+                    </div>
+                    <div className="text-xs text-dark-text-tertiary">
+                      Process in one pass for maximum quality (best for many small segments)
+                    </div>
+                  </div>
+                </label>
+              </div>
+
               <Button
                 onClick={handleSilenceRemoval}
                 variant="primary"
@@ -201,6 +285,84 @@ export const ProcessingPanel: React.FC = () => {
                   <span>60%</span>
                   <span>95%</span>
                 </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-sm font-medium text-dark-text-secondary">
+                    Minimum Keep Duration
+                  </label>
+                  <span className="text-sm text-dark-text-primary font-medium">
+                    {repetitionConfig.minKeepDuration}s
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.1"
+                  value={repetitionConfig.minKeepDuration}
+                  onChange={(e) =>
+                    setRepetitionConfig({
+                      ...repetitionConfig,
+                      minKeepDuration: parseFloat(e.target.value),
+                    })
+                  }
+                  className="w-full h-2 bg-dark-bg-tertiary rounded-lg appearance-none cursor-pointer accent-dark-secondary"
+                />
+                <div className="flex justify-between text-xs text-dark-text-tertiary mt-1">
+                  <span>0.1s</span>
+                  <span>1.0s</span>
+                </div>
+                <p className="text-xs text-dark-text-tertiary mt-1">
+                  Filter out keep segments shorter than this duration
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2 border-t border-dark-divider">
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={repetitionConfig.safeMode}
+                    onChange={(e) =>
+                      setRepetitionConfig({
+                        ...repetitionConfig,
+                        safeMode: e.target.checked,
+                      })
+                    }
+                    className="w-4 h-4 rounded border-dark-border accent-dark-secondary cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-dark-text-secondary">
+                      Safe Mode
+                    </div>
+                    <div className="text-xs text-dark-text-tertiary">
+                      Re-encode segments to eliminate frozen frames (slower but more reliable)
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={repetitionConfig.useSinglePass}
+                    onChange={(e) =>
+                      setRepetitionConfig({
+                        ...repetitionConfig,
+                        useSinglePass: e.target.checked,
+                      })
+                    }
+                    className="w-4 h-4 rounded border-dark-border accent-dark-secondary cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-dark-text-secondary">
+                      Single Pass (Advanced)
+                    </div>
+                    <div className="text-xs text-dark-text-tertiary">
+                      Process in one pass for maximum quality (best for many small segments)
+                    </div>
+                  </div>
+                </label>
               </div>
 
               <Button

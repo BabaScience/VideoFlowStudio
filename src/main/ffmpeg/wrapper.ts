@@ -142,6 +142,11 @@ export class FFmpegWrapper {
     return parseFloat(fpsString);
   }
 
+  private formatTimePrecise(seconds: number): string {
+    // Format with 6 decimal places for millisecond precision
+    return seconds.toFixed(6);
+  }
+
   async getVideoCodecInfo(videoPath: string): Promise<{
     videoCodec: string;
     audioCodec: string;
@@ -172,16 +177,74 @@ export class FFmpegWrapper {
     // Move -ss before -i for more accurate seeking
     // Add -copyinkf to include non-keyframes at start (prevents blank frames)
     // Use make_zero instead of 1 for better timestamp handling
+    // Use precise time formatting to avoid precision loss
     const args = [
       '-ss',
-      startTime.toString(),
+      this.formatTimePrecise(startTime),
       '-i',
       inputPath,
       '-t',
-      duration.toString(),
+      this.formatTimePrecise(duration),
       '-c',
       'copy',
       '-copyinkf',
+      '-avoid_negative_ts',
+      'make_zero',
+      outputPath,
+    ];
+
+    await this.executeFFmpeg(args);
+  }
+
+  async extractSegmentWithReencode(
+    inputPath: string,
+    startTime: number,
+    endTime: number,
+    outputPath: string,
+    sourceMetadata: VideoMetadata
+  ): Promise<void> {
+    // Determine video encoder and quality settings based on source codec
+    let videoEncoder = 'libx264';
+    let videoQualityArgs: string[] = [];
+    const audioEncoder = 'aac';
+    const audioBitrate = sourceMetadata.audio?.bitRate || 192000; // Default to 192kbps
+
+    // Choose encoder and quality settings based on source codec
+    if (sourceMetadata.video?.codec === 'hevc' || sourceMetadata.video?.codec === 'h265') {
+      videoEncoder = 'libx265';
+      videoQualityArgs = ['-crf', '20', '-preset', 'veryfast'];
+    } else if (sourceMetadata.video?.codec === 'vp9') {
+      videoEncoder = 'libvpx-vp9';
+      videoQualityArgs = ['-crf', '30', '-b:v', '0'];
+    } else {
+      // Default to H.264 with high quality
+      videoEncoder = 'libx264';
+      if (sourceMetadata.video?.bitRate) {
+        // Use bitrate-based encoding if we know the source bitrate
+        videoQualityArgs = ['-b:v', sourceMetadata.video.bitRate.toString(), '-preset', 'veryfast'];
+      } else {
+        // Use CRF for quality-based encoding (visually lossless)
+        videoQualityArgs = ['-crf', '18', '-preset', 'veryfast'];
+      }
+    }
+
+    // Use -to (end time) instead of -t (duration) for more precise cutting
+    const args = [
+      '-ss',
+      this.formatTimePrecise(startTime),
+      '-i',
+      inputPath,
+      '-to',
+      this.formatTimePrecise(endTime),
+      '-c:v',
+      videoEncoder,
+      ...videoQualityArgs,
+      '-c:a',
+      audioEncoder,
+      '-b:a',
+      Math.round(audioBitrate / 1000).toString() + 'k',
+      '-reset_timestamps',
+      '1',
       '-avoid_negative_ts',
       'make_zero',
       outputPath,
@@ -238,6 +301,7 @@ export class FFmpegWrapper {
     const hasAudio = sourceMetadata?.audio !== undefined;
     
     // Build filter_complex for concatenation
+    // Use explicit stream indices [i:v:0] and [i:a:0] for proper stream selection
     const numSegments = segmentPaths.length;
     const filterInputs: string[] = [];
     for (let i = 0; i < numSegments; i++) {
@@ -440,6 +504,114 @@ export class FFmpegWrapper {
         reject(new Error(`FFmpeg process error: ${err.message}`));
       });
     });
+  }
+
+  async processWithSinglePass(
+    videoPath: string,
+    keepSegments: Array<{ start: number; end: number }>,
+    outputPath: string,
+    sourceMetadata: VideoMetadata
+  ): Promise<void> {
+    if (keepSegments.length === 0) {
+      throw new Error('No segments to process');
+    }
+
+    // Validate segments first
+    const validSegments = keepSegments.filter(seg => {
+      const duration = seg.end - seg.start;
+      return duration > 0 && seg.start >= 0 && seg.end <= sourceMetadata.duration;
+    });
+
+    if (validSegments.length === 0) {
+      throw new Error('No valid segments to process after validation');
+    }
+
+    // Determine video encoder and quality settings based on source codec
+    let videoEncoder = 'libx264';
+    let videoQualityArgs: string[] = [];
+    const hasAudio = sourceMetadata.audio !== undefined;
+    const audioEncoder = 'aac';
+    const audioBitrate = sourceMetadata.audio?.bitRate || 192000;
+
+    // Choose encoder and quality settings based on source codec
+    if (sourceMetadata.video?.codec === 'hevc' || sourceMetadata.video?.codec === 'h265') {
+      videoEncoder = 'libx265';
+      videoQualityArgs = ['-crf', '20', '-preset', 'slow'];
+    } else if (sourceMetadata.video?.codec === 'vp9') {
+      videoEncoder = 'libvpx-vp9';
+      videoQualityArgs = ['-crf', '30', '-b:v', '0'];
+    } else {
+      // Default to H.264 with high quality
+      if (sourceMetadata.video?.bitRate) {
+        videoQualityArgs = ['-b:v', sourceMetadata.video.bitRate.toString(), '-preset', 'slow'];
+      } else {
+        videoQualityArgs = ['-crf', '18', '-preset', 'slow'];
+      }
+    }
+
+    // Build filter_complex: trim each segment and reset timestamps, then concat
+    // Use explicit stream indices [0:v:0] and [0:a:0] with precise time formatting
+    const filterParts: string[] = [];
+    const concatInputs: string[] = [];
+    const numSegments = validSegments.length;
+
+    for (let i = 0; i < numSegments; i++) {
+      const segment = validSegments[i];
+      const vLabel = `v${i}`;
+      const aLabel = hasAudio ? `a${i}` : null;
+
+      // Trim video segment with explicit stream index and precise times
+      filterParts.push(
+        `[0:v:0]trim=start=${this.formatTimePrecise(segment.start)}:end=${this.formatTimePrecise(segment.end)},setpts=PTS-STARTPTS[${vLabel}]`
+      );
+
+      // Trim audio segment if audio exists
+      if (hasAudio && aLabel) {
+        filterParts.push(
+          `[0:a:0]atrim=start=${this.formatTimePrecise(segment.start)}:end=${this.formatTimePrecise(segment.end)},asetpts=PTS-STARTPTS[${aLabel}]`
+        );
+        concatInputs.push(`[${vLabel}]`, `[${aLabel}]`);
+      } else {
+        concatInputs.push(`[${vLabel}]`);
+      }
+    }
+
+    // Build concat filter
+    const concatFilter = hasAudio
+      ? `${concatInputs.join('')}concat=n=${numSegments}:v=1:a=1[outv][outa]`
+      : `${concatInputs.join('')}concat=n=${numSegments}:v=1[outv]`;
+
+    const filterComplex = [...filterParts, concatFilter].join(';');
+
+    // Build FFmpeg command
+    const args = [
+      '-i',
+      videoPath,
+      '-filter_complex',
+      filterComplex,
+      '-map',
+      '[outv]',
+    ];
+
+    // Add audio mapping if audio exists
+    if (hasAudio) {
+      args.push('-map', '[outa]');
+      args.push('-c:a', audioEncoder);
+      args.push('-b:a', Math.round(audioBitrate / 1000).toString() + 'k');
+    }
+
+    args.push(
+      '-c:v',
+      videoEncoder,
+      ...videoQualityArgs,
+      '-fflags',
+      '+genpts',
+      '-movflags',
+      '+faststart',
+      outputPath
+    );
+
+    await this.executeFFmpeg(args);
   }
 
   sanitizePath(filePath: string): string {
